@@ -75,7 +75,7 @@ class IAMRoleScanner(ResourceScannerRegistry):
 
     def _is_reserved_role(self, role_arn):
         """Check if the role is reserved (service or AWS reserved)."""
-        return "service-role" in role_arn or "aws-reserved" in role_arn
+        return "service-role" in role_arn or "aws-reserved" in role_arn or "ssm-execution-role" in role_arn
 
     def _get_role_last_used(self, iam_client, role_name, current_time):
         """Retrieve the last used time and calculate time since last used."""
