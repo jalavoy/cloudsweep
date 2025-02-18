@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError, ClientError
 from utils.logger import get_logger
 import os
+import traceback
 
 logger = get_logger(__name__)
 
@@ -11,7 +12,7 @@ class AWSSessionManager:
     Manages AWS sessions, including assuming roles, switching regions, and creating new sessions.
     """
 
-    def __init__(self, profile_name: str = "default", account_id: str = None, organization_role: str = None, runner_role: str = None):
+    def __init__(self, profile_name: str = None, account_id: str = None, organization_role: str = None, runner_role: str = None):
         """
         Initialize the AWS session manager.
 
@@ -28,14 +29,19 @@ class AWSSessionManager:
         self.account_id = account_id
         self._session = None
         self._organization_session = None
-        self.account_id = None
 
+        # Always attempt to create a session using the profile_name
+        self._session = self.get_session()
+
+        # Only assume the organization role if it is explicitly provided
         if self.organization_role:
             logger.debug(f"Automatically assuming organization role {self.organization_role}")
             self._organization_session = self.assume_organization_role()
+
+        # Only get regions if the runner_role is explicitly provided
         if self.runner_role:    
             self.regions = self.get_regions()
-            logger.debug(f"Regions: {self.regions}")            
+            logger.debug(f"Regions: {self.regions}")
 
     def get_session(self) -> boto3.Session:
         """
@@ -54,6 +60,7 @@ class AWSSessionManager:
                 logger.debug("AWS session created successfully")
             except (NoCredentialsError, PartialCredentialsError) as e:
                 logger.error(f"Failed to create AWS session: {e}")
+                logger.exception("Traceback for failed session creation:")
                 raise
         else:
             logger.debug("Using existing AWS session.")
@@ -75,6 +82,7 @@ class AWSSessionManager:
             return response['Account']
         except ClientError as e:
             logger.error(f"Error retrieving account ID: {e}")
+            logger.exception("Traceback for account ID retrieval error:")
             raise
 
     def get_regions_by_session(self, session: "AWSSessionManager") -> dict:
@@ -91,10 +99,11 @@ class AWSSessionManager:
             regions = session.get_regions()
             account_id = self.get_account_id()
             return {account_id: (session, regions)}
-
         except Exception as e:
             logger.error(f"Error retrieving regions: {e}")
+            logger.exception("Traceback for regions retrieval error:")
             raise
+
     def assume_organization_role(self) -> boto3.Session:
         """
         Assumes the organization role and returns a boto3 session.
@@ -121,7 +130,9 @@ class AWSSessionManager:
             )
         except ClientError as e:
             logger.error(f"Error assuming organization role: {e.response['Error']['Message']}")
+            logger.exception("Traceback for organization role assumption error:")
             raise
+
     def assume_role(self, role_name: str, account_id: str, session_name="AWSScannerSession", session: "AWSSessionManager" = None) -> "AWSSessionManager":
         """
         Assume a role in a specific account and return a new AWSSessionManager with the assumed role credentials.
@@ -165,8 +176,26 @@ class AWSSessionManager:
 
         except ClientError as e:
             logger.error(f"Error assuming role {role_name} in account {account_id}: {e}")
+            logger.exception("Traceback for role assumption error:")
             raise
+    @staticmethod
+    def get_available_profiles() -> list:
+        """
+        Retrieve a list of available AWS profiles from the AWS configuration and credentials files.
 
+        Returns:
+            list: A list of available AWS profile names.
+        """
+        try:
+            logger.debug("Retrieving available AWS profiles.")
+            session = boto3.Session()
+            profiles = session.available_profiles
+            logger.debug(f"Available profiles: {profiles}")
+            return profiles
+        except Exception as e:
+            logger.error(f"Error retrieving available AWS profiles: {e}")
+            logger.exception("Traceback for profile retrieval error:")
+            raise
     def get_regions(self) -> list[str]:
         """
         Get a list of AWS regions for the current session.
@@ -175,14 +204,19 @@ class AWSSessionManager:
             list[str]: List of region names.
         """
         logger.debug(f"Getting regions for assumed session: {self._session}")
-        if not self._session:
-            ec2_client = self._organization_session.client("ec2")
-        else:
-            ec2_client = self._session.client('ec2')
-        response = ec2_client.describe_regions()
-        regions = [region['RegionName'] for region in response['Regions']]
-        logger.debug(f"Regions retrieved: {regions}")
-        return regions
+        try:
+            if not self._session:
+                ec2_client = self._organization_session.client("ec2")
+            else:
+                ec2_client = self._session.client('ec2')
+            response = ec2_client.describe_regions()
+            regions = [region['RegionName'] for region in response['Regions']]
+            logger.debug(f"Regions retrieved: {regions}")
+            return regions
+        except Exception as e:
+            logger.error(f"Error retrieving regions: {e}")
+            logger.exception("Traceback for regions retrieval error:")
+            raise
 
     def get_organization_accounts(self) -> list:
         """
@@ -194,10 +228,16 @@ class AWSSessionManager:
         try:
             logger.debug("Getting organization accounts")
 
-            if not self._organization_session:
+            # If profile_name is defined, use the current session
+            if self.profile_name:
+                logger.debug("Using profile_name for organization accounts retrieval.")
+                session = self.get_session()
+                org_client = session.client("organizations")
+            else:
+                # If profile_name is not defined, check if organization_role is provided
                 if not self.organization_role:
                     raise ValueError(
-                        "Organization role is required to get organization accounts but was not provided."
+                        "Either profile_name or organization_role is required to get organization accounts, but neither was provided."
                     )
                 logger.debug(f"Assuming organization role: {self.organization_role}")
                 account_id = self.get_account_id()
@@ -206,8 +246,7 @@ class AWSSessionManager:
                     account_id=account_id,
                     session_name="OrganizationSession"
                 )
-
-            org_client = self._organization_session.client("organizations")
+                org_client = self._organization_session.client("organizations")
 
             # Retrieve accounts with pagination
             accounts = []
@@ -223,11 +262,12 @@ class AWSSessionManager:
 
         except ValueError as ve:
             logger.error(f"Configuration error: {ve}")
+            logger.exception("Traceback for configuration error:")
             raise
         except Exception as e:
             logger.error(f"Error getting AWS organization accounts: {e}")
+            logger.exception("Traceback for organization accounts retrieval error:")
             raise
-
     def get_account_name(account_list, account_id):
         """
         Retrieve the account name for a given account ID from the account list.
@@ -245,21 +285,30 @@ class AWSSessionManager:
                 return account["Name"]
         return None  # Return None if the account ID is not found
 
-
     def assume_destination_role_in_all_accounts(self) -> list:
         """
         Assume the destination role across all accounts within the organization and return a list of AWSSessionManager instances.
-
-        Args:
-            destination_role (str): The role name in the destination account.
+        If profile_name is provided, the existing session is used without assuming any roles.
 
         Returns:
-            list: A list of assumed AWSSessionManager instances for each account.
+            list: A list of AWSSessionManager instances for each account.
         """
         try:
             logger.debug(f"Assuming destination role {self.runner_role} in all accounts")
             org_accounts = self.get_organization_accounts()
             assumed_sessions = []
+
+            # If profile_name is provided, use the existing session for all accounts
+            if self.profile_name:
+                logger.debug("Using existing session for all accounts (profile_name is provided).")
+                for account in org_accounts:
+                    account_id = account['Id']
+                    logger.debug(f"Using existing session for account {account_id}")
+                    assumed_sessions.append(self)  # Reuse the current session
+                return assumed_sessions
+
+            # If profile_name is not provided, assume the runner_role in all accounts
+            logger.debug("Assuming roles in all accounts (profile_name is not provided).")
 
             # Determine max workers based on available CPU cores
             max_workers = os.cpu_count() - 1
@@ -284,6 +333,7 @@ class AWSSessionManager:
 
         except Exception as e:
             logger.error(f"Error assuming destination role in all accounts: {e}")
+            logger.exception("Traceback for destination role assumption error:")
             raise
 
     def _assume_role_for_account(self, account):
@@ -308,8 +358,8 @@ class AWSSessionManager:
             )
         except Exception as e:
             logger.error(f"Error assuming destination role for account {account_id}: {e}")
+            logger.exception("Traceback for role assumption error:")
             return None
-
 
     def get_client(self, service_name: str) -> boto3.client:
         """
@@ -351,21 +401,26 @@ class AWSSessionManager:
             AWSSessionManager: A new AWSSessionManager instance with the region switched.
         """
         logger.debug(f"Switching region to {new_region_name}")
-        session = self.get_session()
-        credentials = session.get_credentials().get_frozen_credentials()
-        
-        # Ensure that the region_name is being passed correctly
-        new_session = boto3.Session(
-            aws_access_key_id=credentials.access_key,
-            aws_secret_access_key=credentials.secret_key,
-            aws_session_token=credentials.token,
-            region_name=new_region_name
-        )
-        
-        # Create a new manager and set the region
-        new_manager = AWSSessionManager(profile_name=self.profile_name, account_id=account_id)
-        new_manager._session = new_session
-        new_manager.region_name = new_region_name  # Ensure region is stored
-        logger.debug("Region switched successfully.")
-        
-        return new_manager
+        try:
+            session = self.get_session()
+            credentials = session.get_credentials().get_frozen_credentials()
+            
+            # Ensure that the region_name is being passed correctly
+            new_session = boto3.Session(
+                aws_access_key_id=credentials.access_key,
+                aws_secret_access_key=credentials.secret_key,
+                aws_session_token=credentials.token,
+                region_name=new_region_name
+            )
+            
+            # Create a new manager and set the region
+            new_manager = AWSSessionManager(profile_name=self.profile_name, account_id=account_id)
+            new_manager._session = new_session
+            new_manager.region_name = new_region_name  # Ensure region is stored
+            logger.debug("Region switched successfully.")
+            
+            return new_manager
+        except Exception as e:
+            logger.error(f"Error switching region: {e}")
+            logger.exception("Traceback for region switch error:")
+            raise

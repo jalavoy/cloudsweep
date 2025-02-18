@@ -20,21 +20,38 @@ class ArgumentParser:
         parser = argparse.ArgumentParser(description="AWS Scanner CLI")
         
         # Command-line arguments
-        parser.add_argument("--organization-role", default=os.getenv("CS_ORGANIZATION_ROLE"), help="IAM Role Name for querying the organization.")
-        parser.add_argument("--runner-role", default=os.getenv("CS_RUNNER_ROLE"), help="IAM Role Name for scanning organization accounts.")
-        parser.add_argument("--list-scanners", action="store_true", help="List all available scanners.")
-        parser.add_argument("--list-accounts", action="store_true", help="List all accounts in the AWS Organization.")
         parser.add_argument("--accounts", default=os.getenv("CS_ACCOUNTS", "all"), help="Comma-separated list of account IDs or 'all' for all accounts.")
-        parser.add_argument("--scanners", default=os.getenv("CS_SCANNERS", "all"), help="Comma-separated list of scanners or 'all' to use all scanners.")
-        parser.add_argument("--regions", default=os.getenv("CS_REGIONS", "all"), help="Comma-separated list of regions or 'all' to use all regions.")
-        parser.add_argument("--max-workers", type=int, default=int(os.getenv("CS_MAX_WORKERS", os.cpu_count() - 1)), help="Maximum number of workers to use (default: one less than the number of CPUs).")
         parser.add_argument("--days-threshold", type=int, default=int(os.getenv("CS_DAYS_THRESHOLD", 90)), help="The number of days to look back at resource metrics and history to determine if something is unused (default: 90 days).")
+        parser.add_argument("--list-accounts", action="store_true", help="List all accounts in the AWS Organization.")
+        parser.add_argument('--list-profiles', action='store_true', help="List all available AWS profiles.")
+        parser.add_argument("--list-scanners", action="store_true", help="List all available scanners.")
+        parser.add_argument("--max-workers", type=int, default=int(os.getenv("CS_MAX_WORKERS", os.cpu_count() - 1)), help="Maximum number of workers to use (default: one less than the number of CPUs).")
+        parser.add_argument("--organization-role", default=os.getenv("CS_ORGANIZATION_ROLE"), help="IAM Role Name for querying the organization.")
+        parser.add_argument("--profile", default=os.getenv("CS_PROFILE", "default"), help="AWS profile to use.")
+        parser.add_argument("--regions", default=os.getenv("CS_REGIONS", "all"), help="Comma-separated list of regions or 'all' to use all regions.")
+        parser.add_argument("--runner-role", default=os.getenv("CS_RUNNER_ROLE"), help="IAM Role Name for scanning organization accounts.")
+        parser.add_argument("--scanners", default=os.getenv("CS_SCANNERS", "all"), help="Comma-separated list of scanners or 'all' to use all scanners.")
         parser.add_argument("--upload-confluence", action="store_true", default=False, help="Set to True if you want to upload reports to Confluence.")
 
         args = parser.parse_args()
 
         return args
+    @staticmethod
+    def list_profiles(session_manager: AWSSessionManager):
+        """
+        List all available AWS profiles using the session manager.
 
+        Args:
+            session_manager: An instance of AWSSessionManager.
+        """
+        try:
+            profiles = session_manager.get_available_profiles()
+            print("Available AWS Profiles:")
+            for profile in profiles:
+                print(profile)
+        except Exception as e:
+            logger.error(f"Failed to list AWS profiles: {e}")
+            sys.exit(1)
     @staticmethod
     def get_scanners(args):
         """

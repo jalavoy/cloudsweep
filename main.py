@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 import logging
-import os
+import os, sys
 from dotenv import load_dotenv
 from scanner.executor import Executor
 from scanner.aws.session_manager import AWSSessionManager
@@ -23,10 +23,17 @@ def parse_and_prepare_args():
     """Parses CLI arguments and prepares necessary objects."""
     args = ArgumentParser.parse_arguments()
     logger.debug(f"Parsed arguments: {args}")
+        # Handle --list-profiles argument
+    if args.list_profiles:
+        session_manager = AWSSessionManager()
+        ArgumentParser.list_profiles(session_manager)
+        sys.exit(0)  # Exit after listing profiles
+
     scanners = ArgumentParser.get_scanners(args)
     regions = ArgumentParser.get_regions(args)
-
+    profile = args.profile
     session_manager = AWSSessionManager(
+        profile_name=profile,
         organization_role=args.organization_role,
         runner_role=args.runner_role,
     )
