@@ -91,10 +91,15 @@ class ElbScanner(ResourceScannerRegistry):
             total_requests = fetch_metric(cloudwatch_client, namespace, lb_arn, 'LoadBalancer', request_metric, 'Sum', start_time, end_time)
             total_bytes_sent = fetch_metric(cloudwatch_client, namespace, lb_arn, 'LoadBalancer', bytes_metric, 'Sum', start_time, end_time)
 
+            if "app/" in lb_arn:
+                request_deviation = self._calculate_request_deviation([total_requests])
+            elif "net/" in lb_arn:
+                request_deviation = self._calculate_request_deviation(total_requests)
+
             return {
                 "TotalRequests": total_requests,
                 "TotalBytesSent": total_bytes_sent,
-                "RequestDeviation": self._calculate_request_deviation(total_requests)
+                "RequestDeviation": request_deviation
             }
 
         except Exception as e:
