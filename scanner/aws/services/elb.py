@@ -33,7 +33,6 @@ class ElbScanner(ResourceScannerRegistry):
                 
                 # Retrieve CloudWatch metrics using the helper function
                 metric_data = self._get_load_balancer_metrics(cloudwatch_client, lb_arn)
-
                 # Check if Load Balancer is unused
                 if self._is_unused_load_balancer(metric_data):
                     reason = self._determine_reason(metric_data)
@@ -74,13 +73,28 @@ class ElbScanner(ResourceScannerRegistry):
             end_time = datetime.now(timezone.utc)
             start_time = end_time - timedelta(days=DAYS_THRESHOLD)
 
-            total_requests = fetch_metric(cloudwatch_client, 'AWS/ApplicationELB', lb_arn, 'LoadBalancer', 'RequestCount', 'Sum', start_time, end_time)
-            total_bytes_sent = fetch_metric(cloudwatch_client, 'AWS/ApplicationELB', lb_arn, 'LoadBalancer', 'ProcessedBytes', 'Sum', start_time, end_time)
+            # Determine the type of Load Balancer (ALB or NLB)
+            if "app/" in lb_arn:
+                namespace = 'AWS/ApplicationELB'
+                request_metric = 'RequestCount'
+                bytes_metric = 'ProcessedBytes'
+            elif "net/" in lb_arn:
+                namespace = 'AWS/NetworkELB'
+                request_metric = 'ActiveFlowCount'
+                bytes_metric = 'ProcessedBytes'
+                lb_arn = "/".join(lb_arn.split(":")[-1].split("/")[1:])
+
+            else:
+                logger.error(f"Unknown Load Balancer type for ARN: {lb_arn}")
+                return {"TotalRequests": 0, "TotalBytesSent": 0, "RequestDeviation": 0}
+
+            total_requests = fetch_metric(cloudwatch_client, namespace, lb_arn, 'LoadBalancer', request_metric, 'Sum', start_time, end_time)
+            total_bytes_sent = fetch_metric(cloudwatch_client, namespace, lb_arn, 'LoadBalancer', bytes_metric, 'Sum', start_time, end_time)
 
             return {
                 "TotalRequests": total_requests,
                 "TotalBytesSent": total_bytes_sent,
-                "RequestDeviation": self._calculate_request_deviation([total_requests])
+                "RequestDeviation": self._calculate_request_deviation(total_requests)
             }
 
         except Exception as e:

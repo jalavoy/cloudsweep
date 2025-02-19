@@ -43,9 +43,9 @@ def fetch_metric(cloudwatch_client, namespace, resource_name, dimension_name, me
             }],
             StartTime=start_time,
             EndTime=end_time,
-        )['MetricDataResults'][0]['Values']
+        )
         
-        return metric_data  # Return the list of values (empty if no data available)
+        return metric_data['MetricDataResults'][0]['Values']  # Return the list of values (empty if no data available)
     
     except Exception as e:
         # Log error in your logger system
